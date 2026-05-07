@@ -1,13 +1,14 @@
 """
-🎰 Discord 抽獎機器人
+🎰 Discord 抽獎機器人（Railway 部署版）
 功能：
   - /抽獎面板  → 發送一個嵌入式控制面板（含按鈕）
   - /建立抽獎  → 透過表單建立抽獎活動
-  - /指定抽獎  → 指定成員並抽出中獎者
-  
-需要安裝：pip install discord.py
+  - /快速抽獎  → 指定成員並抽出中獎者
+
+部署平台：Railway
 """
 
+import os
 import discord
 from discord import app_commands, ui
 from discord.ext import commands
@@ -17,20 +18,23 @@ from datetime import datetime
 from typing import Optional
 
 # ============================================================
-#  設定區：請填入你的 Bot Token
+#  從環境變數讀取 Token（Railway 上設定）
 # ============================================================
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
+
+if not BOT_TOKEN:
+    raise RuntimeError("❌ 請在 Railway 的 Variables 中設定 DISCORD_TOKEN")
 
 # ============================================================
 #  Bot 初始化
 # ============================================================
 intents = discord.Intents.default()
-intents.members = True          # 需要開啟「Server Members Intent」
+intents.members = True
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# 儲存進行中的抽獎活動 { guild_id: { 抽獎名稱: {...} } }
+# 儲存進行中的抽獎活動
 active_lotteries = {}
 
 
@@ -75,7 +79,6 @@ class LotteryModal(ui.Modal, title="🎰 建立抽獎活動"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # 驗證中獎人數
         try:
             count = int(self.winner_count.value)
             if count < 1:
@@ -94,12 +97,11 @@ class LotteryModal(ui.Modal, title="🎰 建立抽獎活動"):
             "prize": self.prize.value,
             "winner_count": count,
             "description": self.description.value or "無",
-            "participants": [],       # 指定的參加者
+            "participants": [],
             "creator": interaction.user.id,
             "created_at": datetime.now(),
         }
 
-        # 發送確認訊息 + 成員選擇面板
         embed = discord.Embed(
             title=f"🎰 抽獎活動已建立：{self.lottery_name.value}",
             color=0xFFD700,
@@ -115,14 +117,14 @@ class LotteryModal(ui.Modal, title="🎰 建立抽獎活動"):
 
 
 # ============================================================
-#  成員選擇下拉選單（一次可選多人）
+#  成員選擇下拉選單
 # ============================================================
 class MemberSelect(ui.UserSelect):
     def __init__(self, lottery_key: str, guild_id: int):
         super().__init__(
             placeholder="選擇要加入抽獎的成員...",
             min_values=1,
-            max_values=25,  # 最多一次選 25 人
+            max_values=25,
         )
         self.lottery_key = lottery_key
         self.guild_id = guild_id
@@ -133,7 +135,6 @@ class MemberSelect(ui.UserSelect):
             await interaction.response.send_message("❌ 找不到此抽獎活動！", ephemeral=True)
             return
 
-        # 將選取的成員加入參加者名單（去重）
         existing_ids = {m.id for m in lottery["participants"]}
         added = []
         for member in self.values:
@@ -146,19 +147,16 @@ class MemberSelect(ui.UserSelect):
                 f"　`{i+1}.` {m.display_name}"
                 for i, m in enumerate(lottery["participants"])
             )
-            # 更新原訊息的 embed
             embed = interaction.message.embeds[0]
-            # 更新「已指定成員」欄位
             for i, field in enumerate(embed.fields):
-                if field.name == "📋 已指定成員":
+                if field.name == "📋 已指定成員" or "已指定成員" in field.name:
                     embed.set_field_at(
                         i,
                         name=f"📋 已指定成員（共 {len(lottery['participants'])} 人）",
-                        value=member_list[:1024],  # Discord 欄位上限
+                        value=member_list[:1024],
                         inline=False,
                     )
                     break
-
             await interaction.response.edit_message(embed=embed)
         else:
             await interaction.response.send_message(
@@ -167,15 +165,13 @@ class MemberSelect(ui.UserSelect):
 
 
 # ============================================================
-#  抽獎管理面板（按鈕 + 選單）
+#  抽獎管理面板
 # ============================================================
 class LotteryManageView(ui.View):
     def __init__(self, lottery_key: str, guild_id: int):
         super().__init__(timeout=None)
         self.lottery_key = lottery_key
         self.guild_id = guild_id
-
-        # 加入成員選擇下拉選單
         self.add_item(MemberSelect(lottery_key, guild_id))
 
     @ui.button(label="🎲 開始抽獎", style=discord.ButtonStyle.success, row=2)
@@ -185,7 +181,6 @@ class LotteryManageView(ui.View):
             await interaction.response.send_message("❌ 找不到此抽獎活動！", ephemeral=True)
             return
 
-        # 檢查權限（只有建立者可以開獎）
         if interaction.user.id != lottery["creator"]:
             await interaction.response.send_message("❌ 只有抽獎建立者可以開獎！", ephemeral=True)
             return
@@ -204,10 +199,8 @@ class LotteryManageView(ui.View):
             )
             return
 
-        # ── 開獎動畫 ──
         await interaction.response.defer()
 
-        # 倒數動畫
         countdown_embed = discord.Embed(title="🎰 抽獎即將開始...", color=0xFF6B6B)
         msg = await interaction.followup.send(embed=countdown_embed)
 
@@ -216,10 +209,8 @@ class LotteryManageView(ui.View):
             await msg.edit(embed=countdown_embed)
             await asyncio.sleep(1)
 
-        # 抽出中獎者
         winners = random.sample(participants, winner_count)
 
-        # 結果 Embed
         result_embed = discord.Embed(
             title=f"🎉 抽獎結果：{lottery['name']}",
             description=f"🎁 **獎品：**{lottery['prize']}",
@@ -247,12 +238,9 @@ class LotteryManageView(ui.View):
         result_embed.set_footer(text=f"由 {interaction.user.display_name} 開獎")
 
         await msg.edit(embed=result_embed)
-
-        # 同時 @中獎者
         mentions = " ".join(w.mention for w in winners)
         await interaction.channel.send(f"🎊 恭喜中獎：{mentions}！")
 
-        # 清除此抽獎
         del active_lotteries[self.guild_id][self.lottery_key]
 
     @ui.button(label="👀 查看名單", style=discord.ButtonStyle.primary, row=2)
@@ -291,8 +279,6 @@ class LotteryManageView(ui.View):
             return
 
         lottery["participants"] = []
-
-        # 更新 embed
         embed = interaction.message.embeds[0]
         for i, field in enumerate(embed.fields):
             if "已指定成員" in field.name:
@@ -300,7 +286,6 @@ class LotteryManageView(ui.View):
                     i, name="📋 已指定成員", value="尚未指定任何成員", inline=False
                 )
                 break
-
         await interaction.response.edit_message(embed=embed)
 
     @ui.button(label="❌ 取消抽獎", style=discord.ButtonStyle.secondary, row=2)
@@ -315,7 +300,6 @@ class LotteryManageView(ui.View):
             return
 
         del active_lotteries[self.guild_id][self.lottery_key]
-
         embed = discord.Embed(
             title="❌ 抽獎已取消",
             description=f"「{lottery['name']}」已被 {interaction.user.display_name} 取消。",
@@ -325,7 +309,7 @@ class LotteryManageView(ui.View):
 
 
 # ============================================================
-#  主控制面板 Embed + View
+#  主控制面板
 # ============================================================
 class MainPanelView(ui.View):
     def __init__(self):
@@ -359,23 +343,12 @@ class MainPanelView(ui.View):
 
     @ui.button(label="❓ 使用說明", style=discord.ButtonStyle.secondary, row=0)
     async def help_btn(self, interaction: discord.Interaction, button: ui.Button):
-        embed = discord.Embed(
-            title="📖 抽獎機器人使用說明",
-            color=0xFFD700,
-        )
-        embed.add_field(
-            name="🔹 /抽獎面板",
-            value="顯示主控制面板（就是這個面板）",
-            inline=False,
-        )
-        embed.add_field(
-            name="🔹 /建立抽獎",
-            value="透過表單建立新的抽獎活動",
-            inline=False,
-        )
+        embed = discord.Embed(title="📖 抽獎機器人使用說明", color=0xFFD700)
+        embed.add_field(name="🔹 /抽獎面板", value="顯示主控制面板", inline=False)
+        embed.add_field(name="🔹 /建立抽獎", value="透過表單建立新的抽獎活動", inline=False)
         embed.add_field(
             name="🔹 /快速抽獎",
-            value="快速指定成員並立刻抽獎\n用法：`/快速抽獎 中獎人數:3 成員:@A @B @C @D @E`",
+            value="快速指定成員並立刻抽獎\n用法：`/快速抽獎 中獎人數:3 成員1:@A 成員2:@B 成員3:@C`",
             inline=False,
         )
         embed.add_field(
@@ -391,7 +364,7 @@ class MainPanelView(ui.View):
 
 
 # ============================================================
-#  斜線指令 (Slash Commands)
+#  斜線指令
 # ============================================================
 @bot.tree.command(name="抽獎面板", description="📊 顯示抽獎機器人控制面板")
 async def lottery_panel(interaction: discord.Interaction):
@@ -404,21 +377,9 @@ async def lottery_panel(interaction: discord.Interaction):
         ),
         color=0xFFD700,
     )
-    embed.add_field(
-        name="🎰 建立抽獎",
-        value="建立新的抽獎活動",
-        inline=True,
-    )
-    embed.add_field(
-        name="📋 查看進行中",
-        value="查看目前的抽獎",
-        inline=True,
-    )
-    embed.add_field(
-        name="❓ 使用說明",
-        value="查看指令教學",
-        inline=True,
-    )
+    embed.add_field(name="🎰 建立抽獎", value="建立新的抽獎活動", inline=True)
+    embed.add_field(name="📋 查看進行中", value="查看目前的抽獎", inline=True)
+    embed.add_field(name="❓ 使用說明", value="查看指令教學", inline=True)
     embed.set_footer(text="抽獎機器人 v1.0 ｜ 公平公正公開 🎲")
 
     await interaction.response.send_message(embed=embed, view=MainPanelView())
@@ -455,7 +416,6 @@ async def quick_draw(
     成員7: Optional[discord.Member] = None,
     成員8: Optional[discord.Member] = None,
 ):
-    # 收集所有成員（去重、排除 bot）
     all_members = [成員1, 成員2, 成員3, 成員4, 成員5, 成員6, 成員7, 成員8]
     participants = list({m for m in all_members if m is not None and not m.bot})
 
@@ -470,7 +430,6 @@ async def quick_draw(
         )
         return
 
-    # 倒數
     await interaction.response.defer()
     countdown_embed = discord.Embed(title="⚡ 快速抽獎即將開始...", color=0xFF6B6B)
     msg = await interaction.followup.send(embed=countdown_embed)
@@ -480,7 +439,6 @@ async def quick_draw(
         await msg.edit(embed=countdown_embed)
         await asyncio.sleep(1)
 
-    # 抽獎
     winners = random.sample(participants, 中獎人數)
 
     result_embed = discord.Embed(
@@ -489,7 +447,6 @@ async def quick_draw(
         color=0x00FF88,
         timestamp=datetime.now(),
     )
-
     winner_text = "\n".join(f"　🏆 **{i+1}.** {w.mention}" for i, w in enumerate(winners))
     result_embed.add_field(name="🥇 中獎者", value=winner_text, inline=False)
 
@@ -507,7 +464,7 @@ async def quick_draw(
 
 
 # ============================================================
-#  啟動 Bot
+#  啟動
 # ============================================================
 if __name__ == "__main__":
     print("🚀 正在啟動抽獎機器人...")
