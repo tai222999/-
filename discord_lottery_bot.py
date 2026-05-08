@@ -134,11 +134,34 @@ async def check_scheduled_lotteries():
 # ============================================================
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
+    try:
+        await bot.tree.sync()
+        print("✅ 指令同步完成")
+    except Exception as e:
+        print(f"⚠️ 指令同步失敗：{e}")
     print(f"✅ 機器人已上線：{bot.user}")
     print(f"📡 已加入 {len(bot.guilds)} 個伺服器")
     if not check_scheduled_lotteries.is_running():
         check_scheduled_lotteries.start()
+
+
+# 全域錯誤處理（避免 Unknown interaction 噴紅字）
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandInvokeError):
+        original = error.original
+        if isinstance(original, discord.NotFound) and original.code == 10062:
+            # Unknown interaction — 通常是部署重啟造成的，可忽略
+            print(f"⚠️ Interaction 已過期（指令：{interaction.command.name}），已忽略")
+            return
+    # 其他錯誤嘗試回報給使用者
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(f"❌ 發生錯誤：{error}", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"❌ 發生錯誤：{error}", ephemeral=True)
+    except Exception:
+        print(f"❌ 無法回報錯誤：{error}")
 
 
 # ============================================================
