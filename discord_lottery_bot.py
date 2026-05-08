@@ -255,22 +255,38 @@ class LotteryModal(ui.Modal, title="🎰 建立抽獎活動"):
                 "draw_time": draw_time,
             }
 
-        # 建立 Embed（只有建立者看得到）
+        # ── 公開公告（所有人看得到）──
         time_str = draw_time.strftime("%Y-%m-%d %H:%M") if draw_time else "手動開獎"
-        embed = discord.Embed(
-            title=f"🎰 抽獎活動已建立：{self.lottery_name.value}",
+        public_embed = discord.Embed(
+            title=f"🎰 抽獎活動公告：{self.lottery_name.value}",
+            description="🔔 以下抽獎活動已建立，請留意開獎時間！",
+            color=0xFF9500,
+        )
+        public_embed.add_field(name="🎁 獎品", value=self.prize.value, inline=True)
+        public_embed.add_field(name="👥 中獎人數", value=f"{count} 人", inline=True)
+        public_embed.add_field(name="⏰ 開獎時間", value=time_str, inline=True)
+        if self.description.value:
+            public_embed.add_field(name="📝 說明", value=self.description.value, inline=False)
+        public_embed.set_footer(text=f"建立者：{interaction.user.display_name}｜抽獎機器人 v2.0")
+
+        # ── 私人管理面板（只有建立者看得到）──
+        manage_embed = discord.Embed(
+            title=f"🔧 管理面板：{self.lottery_name.value}",
+            description="⬇️ 以下操作僅你可見，其他成員看不到。",
             color=0xFFD700,
         )
-        embed.add_field(name="🎁 獎品", value=self.prize.value, inline=True)
-        embed.add_field(name="👥 中獎人數", value=f"{count} 人", inline=True)
-        embed.add_field(name="⏰ 開獎時間", value=time_str, inline=True)
-        embed.add_field(name="📝 說明", value=self.description.value or "無", inline=False)
-        embed.add_field(name="📋 已指定成員", value="尚未指定任何成員", inline=False)
-        embed.set_footer(text=f"建立者：{interaction.user.display_name}｜僅你可見")
+        manage_embed.add_field(name="🎁 獎品", value=self.prize.value, inline=True)
+        manage_embed.add_field(name="👥 中獎人數", value=f"{count} 人", inline=True)
+        manage_embed.add_field(name="⏰ 開獎時間", value=time_str, inline=True)
+        manage_embed.add_field(name="📋 已指定成員", value="尚未指定任何成員", inline=False)
+        manage_embed.set_footer(text=f"建立者：{interaction.user.display_name}｜僅你可見")
 
         view = LotteryManageView(lottery_key, guild_id)
-        # ✅ ephemeral=True → 只有建立者看得到
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+        # 先回應 interaction（私人管理面板）
+        await interaction.response.send_message(embed=manage_embed, view=view, ephemeral=True)
+        # 再公開發送公告到頻道
+        await interaction.channel.send(embed=public_embed)
 
 
 # ============================================================
@@ -291,6 +307,10 @@ class MemberSelect(ui.UserSelect):
         lottery = active_lotteries.get(self.guild_id, {}).get(self.lottery_key)
         if not lottery:
             await interaction.response.send_message("❌ 找不到此抽獎活動！", ephemeral=True)
+            return
+
+        if interaction.user.id != lottery["creator"]:
+            await interaction.response.send_message("❌ 只有建立者可以操作！", ephemeral=True)
             return
 
         existing_ids = {m.id for m in lottery["participants"]}
@@ -326,6 +346,10 @@ class RoleSelect(ui.RoleSelect):
         lottery = active_lotteries.get(self.guild_id, {}).get(self.lottery_key)
         if not lottery:
             await interaction.response.send_message("❌ 找不到此抽獎活動！", ephemeral=True)
+            return
+
+        if interaction.user.id != lottery["creator"]:
+            await interaction.response.send_message("❌ 只有建立者可以操作！", ephemeral=True)
             return
 
         existing_ids = {m.id for m in lottery["participants"]}
