@@ -255,38 +255,25 @@ class LotteryModal(ui.Modal, title="🎰 建立抽獎活動"):
                 "draw_time": draw_time,
             }
 
-        # ── 公開公告（所有人看得到）──
+        # ── 公開面板（所有人看得到，只有建立者能操作）──
         time_str = draw_time.strftime("%Y-%m-%d %H:%M") if draw_time else "手動開獎"
-        public_embed = discord.Embed(
-            title=f"🎰 抽獎活動公告：{self.lottery_name.value}",
-            description="🔔 以下抽獎活動已建立，請留意開獎時間！",
-            color=0xFF9500,
-        )
-        public_embed.add_field(name="🎁 獎品", value=self.prize.value, inline=True)
-        public_embed.add_field(name="👥 中獎人數", value=f"{count} 人", inline=True)
-        public_embed.add_field(name="⏰ 開獎時間", value=time_str, inline=True)
-        if self.description.value:
-            public_embed.add_field(name="📝 說明", value=self.description.value, inline=False)
-        public_embed.set_footer(text=f"建立者：{interaction.user.display_name}｜抽獎機器人 v2.0")
-
-        # ── 私人管理面板（只有建立者看得到）──
-        manage_embed = discord.Embed(
-            title=f"🔧 管理面板：{self.lottery_name.value}",
-            description="⬇️ 以下操作僅你可見，其他成員看不到。",
+        embed = discord.Embed(
+            title=f"🎰 抽獎活動：{self.lottery_name.value}",
+            description="📋 以下為抽獎資訊與參加名單，僅建立者可操作。",
             color=0xFFD700,
         )
-        manage_embed.add_field(name="🎁 獎品", value=self.prize.value, inline=True)
-        manage_embed.add_field(name="👥 中獎人數", value=f"{count} 人", inline=True)
-        manage_embed.add_field(name="⏰ 開獎時間", value=time_str, inline=True)
-        manage_embed.add_field(name="📋 已指定成員", value="尚未指定任何成員", inline=False)
-        manage_embed.set_footer(text=f"建立者：{interaction.user.display_name}｜僅你可見")
+        embed.add_field(name="🎁 獎品", value=self.prize.value, inline=True)
+        embed.add_field(name="👥 中獎人數", value=f"{count} 人", inline=True)
+        embed.add_field(name="⏰ 開獎時間", value=time_str, inline=True)
+        if self.description.value:
+            embed.add_field(name="📝 說明", value=self.description.value, inline=False)
+        embed.add_field(name="📋 已指定成員", value="尚未指定任何成員", inline=False)
+        embed.set_footer(text=f"建立者：{interaction.user.display_name}｜僅建立者可操作")
 
         view = LotteryManageView(lottery_key, guild_id)
 
-        # 先回應 interaction（私人管理面板）
-        await interaction.response.send_message(embed=manage_embed, view=view, ephemeral=True)
-        # 再公開發送公告到頻道
-        await interaction.channel.send(embed=public_embed)
+        # ✅ 公開發送，所有人都看得到（但按鈕有權限檢查）
+        await interaction.response.send_message(embed=embed, view=view)
 
 
 # ============================================================
